@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/getkin/kin-openapi/openapi3"
+	"sort"
 	"strings"
 )
 
@@ -139,6 +140,7 @@ func setNode(schema *openapi3.SchemaRef) *Parameter {
 	parameter.Name = schema.Value.Title
 	parameter.DataType = strings.ToLower(schema.Value.Type)
 	parameter.Location = "body"
+	parameter.Required = !schema.Value.Nullable
 	parameter.Description = schema.Value.Description
 
 	return parameter
@@ -149,33 +151,58 @@ func setPlain(schema *openapi3.SchemaRef) *Parameter {
 	parameter.Name = schema.Value.Title
 	parameter.DataType = strings.ToLower(schema.Value.Type)
 	parameter.Location = "body"
+	parameter.Required = !schema.Value.Nullable
 	parameter.Description = schema.Value.Description
 
 	return parameter
 }
 
-func traverse(schema *openapi3.SchemaRef, parent string, required bool) (parameters []*Parameter) {
+func traverse(schema *openapi3.SchemaRef, parent string) (parameters []*Parameter) {
 	switch strings.ToLower(schema.Value.Type) {
 	case "object":
 		parameter := setNode(schema)
 		parameter.Parent = parent
-		parameter.Required = required
 		parameters = append(parameters, parameter)
+		var properties []*openapi3.SchemaRef
 		for key, property := range schema.Value.Properties {
 			property.Value.Title = key
-			parameters = append(parameters, traverse(property, parameter.Name, contains(schema.Value.Required, key))...)
+			property.Value.Nullable = !contains(schema.Value.Required, key)
+			properties = append(properties, property)
+		}
+
+		sort.Slice(properties, func(i, j int) bool {
+			if properties[i].Value.Type == "object" || properties[i].Value.Type == "array" {
+				return false
+			}
+			return true
+		})
+
+		for _, property := range properties {
+			parameters = append(parameters, traverse(property, parameter.Name)...)
 		}
 	case "array":
 		parameter := setNode(schema)
 		parameter.Parent = parent
-		parameter.Required = required
 		parameter.DataType = fmt.Sprintf("array[%s]", schema.Value.Items.Value.Type)
 		parameters = append(parameters, parameter)
 
 		if strings.Compare(schema.Value.Items.Value.Type, "object") == 0 {
+			var properties []*openapi3.SchemaRef
 			for key, property := range schema.Value.Items.Value.Properties {
 				property.Value.Title = key
-				parameters = append(parameters, traverse(property, parameter.Name, contains(schema.Value.Items.Value.Required, key))...)
+				property.Value.Nullable = !contains(schema.Value.Items.Value.Required, key)
+				properties = append(properties, property)
+			}
+
+			sort.Slice(properties, func(i, j int) bool {
+				if properties[i].Value.Type == "object" || properties[i].Value.Type == "array" {
+					return false
+				}
+				return true
+			})
+
+			for _, property := range properties {
+				parameters = append(parameters, traverse(property, parameter.Name)...)
 			}
 		}
 	case "string":
@@ -187,7 +214,6 @@ func traverse(schema *openapi3.SchemaRef, parent string, required bool) (paramet
 	case "boolean":
 		parameter := setPlain(schema)
 		parameter.Parent = parent
-		parameter.Required = required
 		parameters = append(parameters, parameter)
 	}
 
@@ -219,7 +245,7 @@ func getRqBody(swagger *openapi3.Swagger, endpoint string, method string) map[st
 
 	content := make(map[string][]*Parameter)
 	for key, value := range body.Value.Content {
-		content[key] = traverse(value.Schema, "root", true)
+		content[key] = traverse(value.Schema, "root")
 	}
 
 	return content
@@ -324,7 +350,7 @@ func getRsBody(swagger *openapi3.Swagger, endpoint string, method string) map[st
 
 	content := make(map[string][]*Parameter)
 	for key, value := range body.Value.Content {
-		content[key] = traverse(value.Schema, "root", true)
+		content[key] = traverse(value.Schema, "root")
 	}
 
 	return content
