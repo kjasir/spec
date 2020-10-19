@@ -56,7 +56,7 @@ func getAuthentication(swagger *openapi3.Swagger) []*Parameter {
 
 		parameter.Name = value.Value.Name
 		parameter.Location = value.Value.In
-		parameter.DataType = value.Value.Type
+		parameter.DataType = "string"
 		parameter.Required = true
 		parameter.Description = value.Value.Description
 
